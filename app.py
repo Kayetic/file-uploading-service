@@ -1,8 +1,11 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Query
 from fastapi.responses import FileResponse
 import shutil
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
+import schedule
+import time
+import threading
 
 app = FastAPI()
 
@@ -12,12 +15,28 @@ UPLOAD_DIR = "uploads"
 # Ensure the upload directory exists
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+def delete_file(file_path: str):
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        print(f"Deleted file: {file_path}")
+
+def run_schedule():
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
 @app.post("/upload/")
-async def upload_file(file: UploadFile = File(...)) -> Dict[str, str]:
+async def upload_file(file: UploadFile = File(...), expiry: Optional[int] = Query(None, description="Expiry time in minutes")) -> Dict[str, str]:
     # Save the uploaded file
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
+    
+    # Schedule file deletion
+    if expiry is not None:
+        schedule.every(expiry).minutes.do(delete_file, file_path)
+    else:
+        schedule.every(30).days.do(delete_file, file_path)
     
     # Generate download link
     download_link = f"http://localhost:8000/download/{file.filename}"
@@ -41,4 +60,6 @@ async def list_files() -> List[Dict[str, str]]:
 
 if __name__ == "__main__":
     import uvicorn
+    schedule_thread = threading.Thread(target=run_schedule)
+    schedule_thread.start()
     uvicorn.run(app, host="0.0.0.0", port=8000)
